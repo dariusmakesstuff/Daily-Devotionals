@@ -3,7 +3,8 @@ import http.server
 import os
 import socketserver
 
-PORT = 3000
+# Render (and similar hosts) assign a port via the PORT env var.
+PORT = int(os.environ.get("PORT", "3000"))
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
