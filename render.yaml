@@ -1,0 +1,9 @@
+# Deploy as a Web Service on Render (Blueprint / Git-connected).
+# Critical: the server must NOT run during "Build" — only in "Start".
+services:
+  - type: web
+    name: daily-devotionals
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py
