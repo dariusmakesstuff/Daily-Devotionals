@@ -1,0 +1,58 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: wwm
+      POSTGRES_PASSWORD: wwm
+      POSTGRES_DB: wwm_orchestrator
+    ports:
+      - "5433:5432"
+    volumes:
+      - wwm_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wwm -d wwm_orchestrator"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg://wwm:wwm@postgres:5432/wwm_orchestrator
+      REDIS_URL: redis://redis:6379/0
+      SYNC_WORKER: "false"
+      REQUIRE_HUMAN_APPROVAL: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: arq runner.worker_settings.WorkerSettings
+    environment:
+      DATABASE_URL: postgresql+psycopg://wwm:wwm@postgres:5432/wwm_orchestrator
+      REDIS_URL: redis://redis:6379/0
+      SYNC_WORKER: "false"
+      REQUIRE_HUMAN_APPROVAL: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  wwm_pg:

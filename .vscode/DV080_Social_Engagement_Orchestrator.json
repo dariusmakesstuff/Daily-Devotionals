@@ -1,0 +1,534 @@
+{
+  "name": "DV080_Social_Engagement_Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "PRODUCTION STEP: Add HTTP Request node here to POST reply via Meta Graph API, TikTok Comment API, or YouTube Data API. Use output.reply field. Keep manual until 60+ clean runs.",
+        "height": 240,
+        "width": 380,
+        "color": 3
+      },
+      "id": "bfdd4fc1-c558-4d04-b9b2-a0c0dcf637a9",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1312,
+        256
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "afcb5f81-cb23-42f7-8959-0cc680ecb779",
+      "name": "⏰ Poll Comments (Every 30 Min)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [
+        -272,
+        336
+      ],
+      "typeVersion": 1.2
+    },
+    {
+      "parameters": {
+        "jsCode": "// In production: replace this with HTTP Request to Meta Graph API, TikTok API, or YouTube Data API\n// For testing, this returns mock comments\nreturn [\n  { json: { comment_id: 'mock-001', platform: 'instagram', post_id: 'post-001', comment_text: 'This really spoke to me today. Thank you.', author: 'user_123', timestamp: new Date().toISOString() } },\n  { json: { comment_id: 'mock-002', platform: 'tiktok', post_id: 'post-001', comment_text: 'Does this mean God predestines everything?', author: 'user_456', timestamp: new Date().toISOString() } },\n  { json: { comment_id: 'mock-003', platform: 'instagram', post_id: 'post-001', comment_text: 'Needed this. Praying for my family right now.', author: 'user_789', timestamp: new Date().toISOString() } },\n];"
+      },
+      "id": "f893868a-a51d-4368-a918-d0e0790b8ace",
+      "name": "📥 Simulate / Load New Comments",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -48,
+        336
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "Classify this social media comment.\n\ncomment: {{ $json.comment_text }}\nplatform: {{ $json.platform }}\npost_context: \"Daily Christian devotional — scripture-based, encouraging, non-denominational\"\n\nReturn JSON with: classification, severity (mild/moderate/severe), reason, escalate (true/false), escalation_type",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are the Comment Classifier for a Christian devotional social media brand.\n\nClassify each comment into exactly one category:\n- SUPPORTIVE: positive reaction, encouragement, thanks\n- TESTIMONY: sharing personal impact of the content\n- PRAYER_REQUEST: asking for prayer (sub-classify: mild or severe)\n- QUESTION_SIMPLE: basic factual question about the post\n- QUESTION_THEOLOGY: deeper doctrinal or biblical question\n- HOSTILE: aggressive, attacking, mocking\n- TROLLING: clearly baiting with no ministry value\n- SPAM: irrelevant links, bot, promotional\n- CRISIS: ANY sign of self-harm, suicidal ideation, abuse, emergency — when in doubt, CLASSIFY AS CRISIS\n\nBRAND CONSTITUTION (always enforce):\n- Christ-centered, scripture-first, non-denominational\n- Non-partisan, no culture war, no political alignment\n- Encouraging, grounded, wise, simple\n- Clean for ages 5+, strongest resonance adults 25-45\n- Masculine in steadiness, not aggression — welcoming to everyone\n- No prosperity gospel, no fear-mongering, no speculative prophecy\n- No personal details about the creator\n- Approved tagline: Stay rooted. Stay ready.\n\nCRISIS SIGNALS (hard triggers — always classify CRISIS):\n- self-harm language\n- suicidal ideation or references to ending one's life\n- abuse disclosure\n- severe hopelessness + urgency\n- goodbye-style messages\n- threats of harm\n\nReturn only valid JSON."
+        }
+      },
+      "id": "9db2f081-24d8-4154-89d9-95447f35ac40",
+      "name": "🏷️ Comment Classifier",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "position": [
+        176,
+        336
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4.1-mini"
+        },
+        "options": {}
+      },
+      "id": "1ff82d51-fea4-4724-a706-48ef43545264",
+      "name": "LLM: Classifier",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "position": [
+        192,
+        560
+      ],
+      "typeVersion": 1.2
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"classification\": \"SUPPORTIVE\",\n  \"severity\": \"mild\",\n  \"reason\": \"Positive encouragement, no risk indicators\",\n  \"escalate\": false,\n  \"escalation_type\": null\n}"
+      },
+      "id": "8cde4574-93d5-43e8-9b4c-3d8b0dc80280",
+      "name": "Parser: Classification",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "position": [
+        320,
+        560
+      ],
+      "typeVersion": 1.3
+    },
+    {
+      "parameters": {
+        "jsCode": "const src = $('📥 Simulate / Load New Comments').first().json;\nconst out = $('🏷️ Comment Classifier').first().json.output || {};\nconst cls = String(out.classification || '').toUpperCase();\nconst crisis = cls === 'CRISIS' || out.escalate === true;\nconst story_safe =\n  !crisis &&\n  ['SUPPORTIVE', 'TESTIMONY', 'QUESTION_SIMPLE', 'QUESTION_THEOLOGY', 'PRAYER_REQUEST'].includes(cls) &&\n  !['severe'].includes(String(out.severity || '').toLowerCase());\nreturn [\n  {\n    json: {\n      platform: src.platform,\n      platform_post_id: src.post_id,\n      platform_comment_id: src.comment_id,\n      comment_excerpt: String(src.comment_text || '').slice(0, 500),\n      classification: out.classification,\n      severity: out.severity,\n      story_safe,\n      status: crisis ? 'escalated' : 'unused',\n    },\n  },\n];"
+      },
+      "id": "9f869ff4-b567-4b8f-8f4a-fa581a59cebe",
+      "name": "📦 Shape Engagement Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        528,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/audience_engagement_items",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal,resolution=ignore-duplicates"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ platform: $json.platform, platform_post_id: $json.platform_post_id, platform_comment_id: $json.platform_comment_id, comment_excerpt: $json.comment_excerpt, classification: $json.classification, severity: $json.severity, story_safe: $json.story_safe, status: $json.status }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "63b6fdd3-5f0c-49ee-b015-3fe87a982ee0",
+      "name": "💾 Supabase: Insert Engagement",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        752,
+        336
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "dv00000070-0000-4000-8000-000000000000",
+              "leftValue": "={{ $('🏷️ Comment Classifier').first().json.output.escalate === true || String($('🏷️ Comment Classifier').first().json.output.classification || '').toUpperCase() === 'CRISIS' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1e6884c0-3367-4c00-909d-1c6abb239304",
+      "name": "🚨 Escalate?",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        976,
+        336
+      ],
+      "typeVersion": 2.2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "YOUR_SLACK_ESCALATION_WEBHOOK",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={\"text\":\"🚨 *Comment Escalation Required*\\nPlatform: {{ $('📥 Simulate / Load New Comments').first().json.platform }}\\nComment: {{ $('📥 Simulate / Load New Comments').first().json.comment_text }}\\nClassification: {{ $('🏷️ Comment Classifier').first().json.output.classification }}\\nSeverity: {{ $('🏷️ Comment Classifier').first().json.output.severity }}\\nReason: {{ $('🏷️ Comment Classifier').first().json.output.reason }}\\n\\n⚠️ DO NOT auto-reply. Human review required.\"}",
+        "options": {}
+      },
+      "id": "26ef2eca-d624-488d-a8a9-2343f049e7fa",
+      "name": "🚨 Escalate to Human (Slack)",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        1264,
+        176
+      ],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "Write a reply to this comment.\n\noriginal_post_context: \"Daily Christian devotional — scripture-based, non-denominational, encouraging\"\ncomment: {{ $('📥 Simulate / Load New Comments').first().json.comment_text }}\nclassification: {{ $('🏷️ Comment Classifier').first().json.output.classification }}\nplatform: {{ $('📥 Simulate / Load New Comments').first().json.platform }}\n\nReturn JSON with: classification, action (AFFIRM_AND_REPLY / LIMITED_RESPONSE / DO_NOT_REPLY / ESCALATE), reply (empty string if DO_NOT_REPLY), reason, escalate (bool), escalation_type",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are the Engager Agent for a Christian devotional social media brand.\n\nYour purpose is to respond to public comments in a way that is: kind, calm, concise, Christ-centered, non-denominational, non-argumentative, and safe for a broad audience.\n\nBRAND CONSTITUTION (always enforce):\n- Christ-centered, scripture-first, non-denominational\n- Non-partisan, no culture war, no political alignment\n- Encouraging, grounded, wise, simple\n- Clean for ages 5+, strongest resonance adults 25-45\n- Masculine in steadiness, not aggression — welcoming to everyone\n- No prosperity gospel, no fear-mongering, no speculative prophecy\n- No personal details about the creator\n- Approved tagline: Stay rooted. Stay ready.\n\nYOU ARE NOT a pastor, theologian, counselor, or debater.\n\nYour jobs:\n- Acknowledge encouragement with warmth\n- Thank supporters briefly\n- Answer simple content questions (briefly)\n- Redirect hostile or divisive comments without aggression\n- Affirm testimonies and prayer requests with compassion\n\nYOU MUST NEVER:\n- Argue theology, denomination, politics\n- Counsel mental health, trauma, legal, or medical matters\n- Reveal private information about the creator\n- Say \"God told me\" (unless quoting scripture)\n- Diagnose, shame, or mock anyone\n- Write more than 2-3 sentences for any reply\n- Give platform to trolls or conspiracy content\n\nHARD RULES by classification:\n- HOSTILE: reply only if clear de-escalation possible, otherwise empty reply\n- TROLLING: ALWAYS empty reply\n- SPAM: ALWAYS empty reply\n- THEOLOGY question: brief, gentle, redirect to scripture and encouragement, DO NOT debate\n\nAlways end with tagline when natural: \"Stay rooted. Stay ready.\"\n\nReturn only valid JSON."
+        }
+      },
+      "id": "01efc56f-3617-4c30-8b63-2b0bcfe76ca7",
+      "name": "💬 Engager Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "position": [
+        1200,
+        480
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4.1-mini"
+        },
+        "options": {}
+      },
+      "id": "c43d48a7-d340-4d42-8894-2f29fcac208c",
+      "name": "LLM: Engager",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "position": [
+        1216,
+        704
+      ],
+      "typeVersion": 1.2
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"classification\": \"SUPPORTIVE\",\n  \"action\": \"AFFIRM_AND_REPLY\",\n  \"reply\": \"Thank you. Grateful it spoke to you today. Stay rooted. Stay ready.\",\n  \"reason\": \"Supportive comment with no risk indicators.\",\n  \"escalate\": false,\n  \"escalation_type\": null\n}"
+      },
+      "id": "e745c00e-f0ad-42bf-82ab-f64c9c984fb4",
+      "name": "Parser: Engager Output",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "position": [
+        1344,
+        704
+      ],
+      "typeVersion": 1.3
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "dv00000076-0000-4000-8000-000000000000",
+              "leftValue": "={{ $json.output.action }}",
+              "rightValue": "DO_NOT_REPLY",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c2ad7875-3f69-483d-912b-2ba7a23437a1",
+      "name": "✅ Should Publish Reply?",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        1552,
+        480
+      ],
+      "typeVersion": 2.2
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_GOOGLE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "id",
+          "value": "Comments"
+        },
+        "columns": {
+          "value": {
+            "comment_id": "={{ $('📥 Simulate / Load New Comments').first().json.comment_id }}",
+            "platform": "={{ $('📥 Simulate / Load New Comments').first().json.platform }}",
+            "comment_text": "={{ $('📥 Simulate / Load New Comments').first().json.comment_text }}",
+            "classification": "={{ $('🏷️ Comment Classifier').first().json.output.classification }}",
+            "action": "={{ $json.output.action }}",
+            "reply": "={{ $json.output.reply }}",
+            "escalated": "={{ $json.output.escalate }}"
+          },
+          "schema": [
+            {
+              "id": "comment_id",
+              "type": "string",
+              "display": true
+            },
+            {
+              "id": "platform",
+              "type": "string",
+              "display": true
+            },
+            {
+              "id": "comment_text",
+              "type": "string",
+              "display": true
+            },
+            {
+              "id": "classification",
+              "type": "string",
+              "display": true
+            },
+            {
+              "id": "action",
+              "type": "string",
+              "display": true
+            },
+            {
+              "id": "reply",
+              "type": "string",
+              "display": true
+            },
+            {
+              "id": "escalated",
+              "type": "string",
+              "display": true
+            }
+          ],
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "comment_id"
+          ]
+        },
+        "options": {}
+      },
+      "id": "d74525a3-3002-4b04-8af7-339ae8496f1f",
+      "name": "📊 Log Comment to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [
+        1776,
+        480
+      ],
+      "typeVersion": 4.5
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "⏰ Poll Comments (Every 30 Min)": {
+      "main": [
+        [
+          {
+            "node": "📥 Simulate / Load New Comments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📥 Simulate / Load New Comments": {
+      "main": [
+        [
+          {
+            "node": "🏷️ Comment Classifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM: Classifier": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "🏷️ Comment Classifier",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parser: Classification": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "🏷️ Comment Classifier",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🏷️ Comment Classifier": {
+      "main": [
+        [
+          {
+            "node": "📦 Shape Engagement Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📦 Shape Engagement Row": {
+      "main": [
+        [
+          {
+            "node": "💾 Supabase: Insert Engagement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Supabase: Insert Engagement": {
+      "main": [
+        [
+          {
+            "node": "🚨 Escalate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🚨 Escalate?": {
+      "main": [
+        [
+          {
+            "node": "🚨 Escalate to Human (Slack)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "💬 Engager Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM: Engager": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "💬 Engager Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parser: Engager Output": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "💬 Engager Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Engager Agent": {
+      "main": [
+        [
+          {
+            "node": "✅ Should Publish Reply?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Should Publish Reply?": {
+      "main": [
+        [
+          {
+            "node": "📊 Log Comment to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "📊 Log Comment to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "aa476fa6-d80a-452d-a5ea-b1010d4613d0",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ba4059287cf3393c712c0506acd69a2f289dfc50ef29809ed4d8cfa92a9a1f8f"
+  },
+  "id": "NavBnkNwoC3sSbmH",
+  "tags": []
+}

@@ -1,0 +1,270 @@
+{
+  "name": "WalkWithMe_Slack_Intake",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wwm-slack",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "847c47d9-c268-4288-ac6e-73bad3c15165",
+      "name": "⚡ Slack: /wwm Command",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        160
+      ],
+      "webhookId": "d24ea9a7-13db-4559-b5e5-12f694ac752d"
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// Slack sends slash command data as application/x-www-form-urlencoded\nconst raw = $input.first().json.body || '';\nconst params = {};\n\nif (typeof raw === 'string') {\n  raw.split('&').forEach(pair => {\n    const [key, val] = pair.split('=');\n    if (key) params[decodeURIComponent(key)] = decodeURIComponent((val || '').replace(/\\+/g, ' '));\n  });\n} else if (typeof raw === 'object') {\n  // n8n may pre-parse it\n  Object.assign(params, raw);\n}\n\nconst text = params.text || params.body?.text || '';\nconst userId = params.user_id || '';\nconst userName = params.user_name || 'Devon';\nconst responseUrl = params.response_url || '';\nconst channelId = params.channel_id || '';\n\nif (!text || text.trim() === '') {\n  return [{\n    json: {\n      error: true,\n      message: 'No seed idea provided',\n      response_url: responseUrl,\n      user_id: userId\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    raw_text: text.trim(),\n    user_id: userId,\n    user_name: userName,\n    response_url: responseUrl,\n    channel_id: channelId,\n    timestamp: new Date().toISOString()\n  }\n}];\n"
+      },
+      "id": "5c6f9137-8ec2-421c-8026-afeaf82a2010",
+      "name": "🔍 Parse Slack Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"response_type\": \"ephemeral\", \"text\": \"\\ud83d\\ude4f Got it \\u2014 building your episode now. I'll send you a follow-up when it's queued.\"}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "39eb7476-1473-441a-b72a-7cd0f382118b",
+      "name": "✅ ACK: Got It",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        224,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENAI_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={\n  \"model\": \"gpt-4.1-mini\",\n  \"temperature\": 0,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You extract structured fields from a person's raw devotional seed idea. Return ONLY a valid JSON object — no markdown, no code fences, no explanation. Start with { and end with }.\\n\\nFields to extract:\\n- seed_idea: The core personal or spiritual idea, cleaned up into a clear full sentence or two. Preserve the person's voice and specific details.\\n- suggested_scripture: Any Bible verse or passage mentioned (format as Book Chapter:Verse). null if none mentioned.\\n- emotion: Pick the single best match from: hopeful | heavy | funny | wonder | grateful | sad | light. Default to hopeful if unclear.\\n- notes: Any tone, style, or production instructions the person mentioned (e.g. 'keep it light', 'don't resolve it too cleanly'). Empty string if none.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.raw_text) }}\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "6f3f1e84-c2a2-41d1-9bd8-cdd3ddcc613e",
+      "name": "🧠 OpenAI: Parse Seed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        160
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "EqB5kqPSZzmQLUQ0",
+          "name": "youversionApiKey"
+        },
+        "openAiApi": {
+          "id": "7intKdluLjsAAL8H",
+          "name": "OpenAi account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst openaiResponse = $input.first().json;\nconst raw = openaiResponse.choices?.[0]?.message?.content || '{}';\n\nlet parsed = {};\ntry {\n  parsed = JSON.parse(raw);\n} catch(e) {\n  // Try stripping markdown fences if model disobeyed\n  const cleaned = raw.replace(/^```json?\\n?/,'').replace(/\\n?```$/,'').trim();\n  try { parsed = JSON.parse(cleaned); } catch(e2) { parsed = {}; }\n}\n\n// Pull context from the parse step (2 nodes back)\nconst parseNode = $('🔍 Parse Slack Payload').first().json;\n\nreturn [{\n  json: {\n    seed_idea:            parsed.seed_idea            || parseNode.raw_text,\n    suggested_scripture:  parsed.suggested_scripture  || null,\n    emotion:              parsed.emotion               || 'hopeful',\n    notes:                parsed.notes                 || '',\n    // Pass through for follow-up DM\n    _meta: {\n      user_id:      parseNode.user_id,\n      user_name:    parseNode.user_name,\n      response_url: parseNode.response_url,\n      raw_text:     parseNode.raw_text,\n      timestamp:    parseNode.timestamp\n    }\n  }\n}];\n"
+      },
+      "id": "ef540d76-7d0d-4715-af06-da75b56eb844",
+      "name": "🗂️ Format Seed Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://walkwithmedevotions.cloud-ip.cc:5678/webhook/custom-story",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={\n  \"seed_idea\":           {{ JSON.stringify($json.seed_idea) }},\n  \"suggested_scripture\": {{ JSON.stringify($json.suggested_scripture) }},\n  \"emotion\":             {{ JSON.stringify($json.emotion) }},\n  \"notes\":               {{ JSON.stringify($json.notes) }},\n  \"source\":              \"slack_slash_command\",\n  \"submitted_by\":        {{ JSON.stringify($json._meta.user_name) }},\n  \"submitted_at\":        {{ JSON.stringify($json._meta.timestamp) }}\n}",
+        "options": {}
+      },
+      "id": "dfdea8fc-5c2a-415b-b4c0-8da1ee186551",
+      "name": "🚀 Trigger: Custom Story",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('🗂️ Format Seed Payload').first().json._meta.response_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={\n  \"response_type\": \"ephemeral\",\n  \"blocks\": [\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \"*Episode queued ✅*\\n> {{ $('🗂️ Format Seed Payload').first().json.seed_idea.replace(/\"/g, '\\\\\"').substring(0, 140) }}{{ $('🗂️ Format Seed Payload').first().json.seed_idea.length > 140 ? '…' : '' }}\"\n      }\n    },\n    {\n      \"type\": \"context\",\n      \"elements\": [\n        {\n          \"type\": \"mrkdwn\",\n          \"text\": \"{{ $('🗂️ Format Seed Payload').first().json.suggested_scripture ? '📖 ' + $('🗂️ Format Seed Payload').first().json.suggested_scripture + '  ·  ' : '' }}🎭 {{ $('🗂️ Format Seed Payload').first().json.emotion }}  ·  🎙️ Running through the full pipeline now\"\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "b12b8ef6-378a-49e4-80e2-4d250778decb",
+      "name": "💬 Slack: Confirm Queued",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1104,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Slack App Setup\n\n**1. Create Slack App**\n→ https://api.slack.com/apps → \"Create New App\" → \"From scratch\"\n→ Name: Walk With Me  |  Pick your workspace\n\n**2. Add Slash Command**\n→ Slash Commands → Create New Command\n→ Command: `/wwm`\n→ Request URL: `https://n8n-latest-d2lq.onrender.com/webhook/wwm-slack`\n→ Short Description: Submit a devotional seed idea\n→ Usage Hint: `[your idea — scripture and emotion optional]`\n\n**3. Install to Workspace**\n→ OAuth & Permissions → Install to Workspace\n\n**4. Usage from phone**\nOpen Slack → any channel or DM → type:\n`/wwm Been thinking about what it means to lead when you feel unqualified. Maybe Exodus 4.`",
+        "width": 1380,
+        "color": 4
+      },
+      "id": "ebc52fe4-00e8-4401-b230-49488ce48ad0",
+      "name": "📋 Setup: Slack App",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -224,
+        -48
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "⚡ Slack: /wwm Command": {
+      "main": [
+        [
+          {
+            "node": "🔍 Parse Slack Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Parse Slack Payload": {
+      "main": [
+        [
+          {
+            "node": "✅ ACK: Got It",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ ACK: Got It": {
+      "main": [
+        [
+          {
+            "node": "🧠 OpenAI: Parse Seed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧠 OpenAI: Parse Seed": {
+      "main": [
+        [
+          {
+            "node": "🗂️ Format Seed Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗂️ Format Seed Payload": {
+      "main": [
+        [
+          {
+            "node": "🚀 Trigger: Custom Story",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🚀 Trigger: Custom Story": {
+      "main": [
+        [
+          {
+            "node": "💬 Slack: Confirm Queued",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "1f65930a-9411-4477-9381-9a51647e0ec0",
+  "meta": {
+    "instanceId": "ba4059287cf3393c712c0506acd69a2f289dfc50ef29809ed4d8cfa92a9a1f8f"
+  },
+  "id": "RposS5T3wrIjiv3Y",
+  "tags": []
+}

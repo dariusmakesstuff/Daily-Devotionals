@@ -1,0 +1,49 @@
+Walk With Me — n8n continuity integration
+==========================================
+
+1. Supabase: run migrations in supabase/migrations/ (in order) in the Supabase SQL editor, or `supabase db push`.
+
+2. DV001: Import n8n/workflows/DV001_Daily_Devotional_Orchestrator.json (or re-run scripts/patch_dv001_continuity.py against your latest export).
+
+3. DV080: Import n8n/workflows/DV080_Social_Engagement_Orchestrator.json. Set SUPABASE_URL and SUPABASE_ANON_KEY on the n8n host (or replace with expressions matching DV001 Set Global Config).
+
+4. New DV001 nodes (after Normalize Last Arc):
+   - Get editorial_calendar, audience_engagement_items, character_canon
+   - Assemble Supabase Context Pack → feeds Character Memory, Story Architect, Signal Agent
+
+5. Post-publish: "Post-Publish: Sync Canon + Episodes + Engagement" runs after Log Episode; upserts character_canon when serialized; marks engagement UUIDs listed in Story Architect output audience_engagement_ids_used.
+
+6. Tighten RLS in production: replace open policies with service_role-only or signed JWT claims.
+
+7. Media (GCS): keep complex ffmpeg off n8n when possible; set episode_log.media_manifest_uri when you add a render worker. TTS uploads to GCS already exist in this workflow.
+
+8. Upload-Post (optional, cheaper multi-platform video): In n8n, install community package `n8n-nodes-upload-post` (Settings → Community Nodes), create credentials **Upload Post API** with your key from https://app.upload-post.com/api-keys , then in the imported workflow open **📤 Upload Post: Multi-Platform Video** and attach that credential (replace placeholder). Set host env `USE_UPLOAD_POST=true` to route **📊 Log Run to Google Sheets** → **🔀 IF: Publishing via Upload-Post?** → one **Upload Video** call for all enabled `post_*` platforms; set `UPLOAD_POST_USER` to your Upload-Post profile username (default `default`). When `USE_UPLOAD_POST` is not `true`, the existing native / Blotato branches run unchanged. Node repo: https://github.com/Upload-Post/n8n-nodes-upload-post .
+
+   API reference (verify as product evolves): https://docs.upload-post.com/api/upload-video/
+   - One `POST /api/upload` with `user`, `platform[]`, and `video` (file or **HTTPS URL**). **Title** is required for **YouTube** (and **Reddit** if you ever add `reddit` — then `subreddit` is also required per docs).
+   - **description** applies to YouTube, Facebook, LinkedIn, Pinterest; it is **ignored** for TikTok, Instagram, X, and Threads on video uploads.
+   - **Facebook** needs `facebook_page_id` when posting to Facebook (workflow passes `FACEBOOK_PAGE_ID` via the prepare item). Optional: in the node UI set `facebook_media_type` to `REELS` (short vertical) vs `VIDEO` (normal page video, longer) per docs.
+   - **Async:** With `async_upload=false`, uploads that run longer than ~59s still switch to background processing and return a **request_id** — poll with Upload Status (the node’s “Wait for Completion” does this). Scheduled posts return **202** + **job_id**.
+   - **Responses:** `200` may include **per-platform** `success` / `error` inside `results` — one network can fail while others succeed; inspect execution output if a platform looks missing.
+   - **Limits:** `429` when monthly quota is exceeded; docs also note **TikTok** may return **403** on some plans (e.g. not available on Free) — confirm your Upload-Post plan matches the networks you enable.
+   - **YouTube compliance:** The workflow sets **Contains synthetic media** (`containsSyntheticMedia`) for AI-generated video (e.g. Veo) per API docs; adjust **privacy**, **categoryId**, **tags**, **made for kids**, etc. in the node if needed.
+
+9. Research theology gate + retries: **Parser: Guardrail-1 Output** must match the Research guardrail JSON (theology_status, accuracy_issues, revision_notes, etc.). On reject, the workflow appends a row to Google Sheets (**📋 Log Research Theology Reject**) on a tab named by `research_theology_reject_sheet_name` (default **Theology_Rejections** — create that tab with headers: run_id, date, stage, research_generation, theology_status, revision_notes, reject_payload). Then **🔧 Research Theology Reject Handler** loops back through **🔧 Compose Research Request** → **📖 Research Agent** until approval or cap. Env: `RESEARCH_THEOLOGY_MAX_GENERATIONS` (default `3`), `RESEARCH_THEOLOGY_REJECT_SHEET` (tab name). Sheet append uses `continueOnFail: true` so a missing tab does not block retries.
+
+10. Monthly creative refresh (no separate n8n agent required): Update the latest row in **editorial_calendar** in Supabase. Optional columns (if you add them to the table) are read into `memory_context_pack.monthly_theme`: `audience_framing_notes`, `voice_writer_notes`, `creative_rotation_notes`, **`visual_director_notes`** — they flow into Audience Framing, **✍️ Voice Writer**, and **🎬 Visual Director** prompts. Day-level variety also uses **world_pulse.creative_rotation** (format letter + hook mode) from **📅 Build Daily Context**. The Visual Director uses classic film craft (e.g. Lumet, Murch, Mackendrick) as *principles*, not a fixed template. The Voice Writer uses spoken-story craft (e.g. narrative radio structure, *Storyworthy*-style specificity, light story beats, clarity from strong talks/courses, comedy timing as truth-in-joke) so episodes stay **impactful, versatile, and human** — not a single frozen “brand voice.”
+
+11. Multi-provider TTS + stock background loops (DV001)
+   - **Provider switch:** Set host env `TTS_PROVIDER` to `elevenlabs` (default), `openai`, `azure`, or `google`. The four **🎤 ElevenLabs:** nodes are Code nodes that call the same APIs; node names are unchanged for graph stability.
+   - **Emotional posture → voice:** Uses **hook_energy** (and posture) from **🌅 Select Background Loop** / Audience Framing. **ElevenLabs** still uses `voice_host_*` / `voice_reflection_*` and `ELEVENLABS_*` IDs from config. **OpenAI** (`/v1/audio/speech`) maps anchor/fire/shepherd/challenger to default voices unless overridden; see [OpenAI audio and speech](https://developers.openai.com/api/docs/guides/audio). Optional env: `OPENAI_TTS_MODEL` (default `gpt-4o-mini-tts`), `OPENAI_VOICE_HOST`, `OPENAI_VOICE_REFLECTION` (single voice for that role across postures). Voice demos: [openai.fm](https://www.openai.fm/).
+   - **Azure Speech:** `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION` (e.g. `eastus`). Optional `AZURE_VOICE_HOST`, `AZURE_VOICE_REFLECTION` (full neural voice names, e.g. `en-US-GuyNeural`); else defaults follow posture.
+   - **Google Cloud TTS:** `GOOGLE_TTS_API_KEY` (API key with Text-to-Speech enabled). Optional JSON env `GOOGLE_VOICE_HOST_JSON` / `GOOGLE_VOICE_REFLECTION_JSON` as `{"languageCode":"en-US","name":"en-US-Neural2-D"}`; else defaults follow posture.
+   - **Regenerating embedded code:** Edit `scripts/build_tts_js_codes.js`, run `node scripts/build_tts_js_codes.js`, then `python scripts/patch_dv001_tts_and_media.py` (or merge `n8n/code/generated_tts_codes.json` into the four Code nodes by hand).
+   - **Stock loop videos:** Upload the listed sample MP4s to GCS under `{gcs_bucket}/Media/` (or set `GCS_MEDIA_FOLDER`). **🌅 Select Background Loop** picks **portrait** vs **landscape** from **Set Global Config** `aspect_ratio` (`9:16` vs `16:9`) and rotates files by day + posture. Public URL pattern: `https://storage.googleapis.com/<bucket>/<Media>/<filename>.mp4`.
+
+12. Python orchestrator (Phase 1 scaffold, optional path off n8n): See **orchestrator/README.md**. FastAPI + Arq + Postgres + Redis track **runs** and **run_steps** with a DV001-aligned stage order (**orchestrator/docs/AGENT_PIPELINE.md**). Stages are stubs until you wire LLMs/APIs. Set `REQUIRE_HUMAN_APPROVAL=false` for unattended runs; use `POST /runs/{id}/resume` after a human gate when true. You can point `DATABASE_URL` at Supabase Postgres later and migrate `runs` / `run_steps` tables there.
+
+Last Arc / Normalize troubleshooting
+------------------------------------
+- Empty `body: []` from Supabase is normal when no rows exist yet.
+- Workflow uses `character_episodes` (where post-publish sync writes). Legacy data in `character_arcs` only: change the Get Last Arc URL back to `character_arcs` or copy rows forward.
+- `Coerce: Last Arc HTTP Output` + hardened `Normalize: Last Arc` fix n8n emitting zero items for `[]` and string/Buffer bodies.

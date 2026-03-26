@@ -1,0 +1,51 @@
+# Start everything:
+#   docker compose up -d --build
+#
+# Rebuild after code changes:
+#   docker compose up -d --build media-worker
+
+services:
+  media-worker:
+    build: .
+    container_name: media-worker
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      WHISPER_MODEL: base
+      WHISPER_DEVICE: cpu
+      WHISPER_COMPUTE_TYPE: int8
+      YTDLP_SUB_LANGS: "en.*,en-US.*"
+    volumes:
+      - whisper_cache:/root/.cache/huggingface
+    networks:
+      - automation
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    env_file:
+      - .env
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - automation
+    depends_on:
+      media-worker:
+        condition: service_healthy
+
+networks:
+  automation:
+
+volumes:
+  n8n_data:
+  whisper_cache:

@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Walk With Me — Orchestrator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=Instrument+Serif&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0f1218;
+      --panel: #181c26;
+      --border: #2a3142;
+      --text: #e8eaef;
+      --muted: #8b93a7;
+      --accent: #c4a574;
+      --ok: #6bcf8e;
+      --skip: #7a8ab8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "DM Sans", system-ui, sans-serif;
+      font-size: 15px;
+      line-height: 1.5;
+    }
+    header {
+      border-bottom: 1px solid var(--border);
+      padding: 1.25rem 1.75rem;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+    h1 {
+      margin: 0;
+      font-family: "Instrument Serif", Georgia, serif;
+      font-weight: 400;
+      font-size: 1.65rem;
+      letter-spacing: 0.02em;
+    }
+    nav a {
+      color: var(--accent);
+      text-decoration: none;
+      margin-right: 1.25rem;
+      font-size: 0.9rem;
+    }
+    nav a:hover { text-decoration: underline; }
+    main { padding: 1.5rem 1.75rem 3rem; max-width: 1200px; margin: 0 auto; }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+      align-items: center;
+    }
+    button {
+      font-family: inherit;
+      font-size: 0.9rem;
+      padding: 0.55rem 1rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); color: var(--accent); }
+    button.primary {
+      background: var(--accent);
+      color: #0f1218;
+      border-color: var(--accent);
+      font-weight: 600;
+    }
+    button.primary:hover { filter: brightness(1.08); color: #0f1218; }
+    .status { color: var(--muted); font-size: 0.85rem; }
+    .err { color: #e07a7a; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    th, td {
+      text-align: left;
+      padding: 0.65rem 0.85rem;
+      border-bottom: 1px solid var(--border);
+    }
+    th { color: var(--muted); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(196, 165, 116, 0.06); }
+    code { font-size: 0.8rem; color: var(--accent); }
+    .pill {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .pill.succeeded { background: rgba(107, 207, 142, 0.2); color: var(--ok); }
+    .pill.failed { background: rgba(224, 122, 122, 0.2); color: #e07a7a; }
+    .pill.queued, .pill.running { background: rgba(196, 165, 116, 0.2); color: var(--accent); }
+    .pill.waiting_human { background: rgba(122, 138, 184, 0.25); color: #a8b8e8; }
+    details { margin-top: 0.5rem; }
+    details summary { cursor: pointer; color: var(--muted); font-size: 0.85rem; }
+    pre {
+      margin: 0.5rem 0 0;
+      padding: 0.75rem;
+      background: var(--bg);
+      border-radius: 6px;
+      overflow: auto;
+      font-size: 0.72rem;
+      max-height: 240px;
+      border: 1px solid var(--border);
+    }
+    .note {
+      color: var(--muted);
+      font-size: 0.9rem;
+      max-width: 52rem;
+      margin-bottom: 1.25rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Walk With Me Orchestrator</h1>
+    <nav>
+      <a href="/dashboard">Dashboard</a>
+      <a href="/docs">API docs (Swagger)</a>
+      <a href="/openapi.json" target="_blank" rel="noopener">OpenAPI JSON</a>
+      <a href="/health">Health</a>
+      <a href="/health/integrations">Integrations</a>
+      <a href="/integrations">Integration toggles (JSON)</a>
+    </nav>
+  </header>
+  <main>
+    <p class="note">
+      This is a <strong>Phase 1</strong> control page: it talks to the same backend as <code>GET /runs</code>.
+      A full product dashboard (auth, settings, cost charts, integration toggles) is a <strong>later phase</strong> — typically a separate React/Next app or a richer server-rendered UI.
+    </p>
+    <div class="toolbar">
+      <button type="button" class="primary" id="btn-audio">New run — audio only</button>
+      <button type="button" id="btn-video">New run — video</button>
+      <button type="button" id="btn-refresh">Refresh list</button>
+      <span class="status" id="msg"></span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Run ID</th>
+          <th>Status</th>
+          <th>Mode</th>
+          <th>Created</th>
+          <th>Steps</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </main>
+  <script>
+    const tbody = document.getElementById("tbody");
+    const msg = document.getElementById("msg");
+
+    function pillClass(s) {
+      const v = (s || "").toLowerCase();
+      if (v === "succeeded") return "pill succeeded";
+      if (v === "failed") return "pill failed";
+      if (v === "waiting_human") return "pill waiting_human";
+      return "pill queued";
+    }
+
+    async function loadRuns() {
+      msg.textContent = "Loading…";
+      msg.className = "status";
+      try {
+        const r = await fetch("/runs");
+        if (!r.ok) throw new Error(r.status + " " + r.statusText);
+        const data = await r.json();
+        tbody.innerHTML = "";
+        for (const run of data) {
+          const tr = document.createElement("tr");
+          const sid = run.id;
+          const ok = run.steps.filter((x) => x.status === "succeeded").length;
+          const sk = run.steps.filter((x) => x.status === "skipped").length;
+          tr.innerHTML = `
+            <td><code>${sid.slice(0, 8)}…</code></td>
+            <td><span class="${pillClass(run.status)}">${run.status}</span></td>
+            <td>${run.output_mode}</td>
+            <td>${run.created_at ? run.created_at.replace("T", " ").slice(0, 19) + " UTC" : "—"}</td>
+            <td>
+              ${ok} ok / ${sk} skip / ${run.steps.length} total
+              <details>
+                <summary>Steps</summary>
+                <pre>${JSON.stringify(run.steps, null, 2)}</pre>
+              </details>
+            </td>`;
+          tbody.appendChild(tr);
+        }
+        msg.textContent = data.length ? `${data.length} run(s)` : "No runs yet.";
+      } catch (e) {
+        msg.textContent = String(e.message || e);
+        msg.className = "status err";
+      }
+    }
+
+    async function createRun(mode) {
+      msg.textContent = "Creating run…";
+      msg.className = "status";
+      try {
+        const r = await fetch("/runs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ output_mode: mode }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        await loadRuns();
+        msg.textContent = "Run created.";
+      } catch (e) {
+        msg.textContent = String(e.message || e);
+        msg.className = "status err";
+      }
+    }
+
+    document.getElementById("btn-refresh").addEventListener("click", loadRuns);
+    document.getElementById("btn-audio").addEventListener("click", () => createRun("audio_only"));
+    document.getElementById("btn-video").addEventListener("click", () => createRun("video"));
+    loadRuns();
+  </script>
+</body>
+</html>
